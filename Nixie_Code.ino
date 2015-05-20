@@ -1,18 +1,16 @@
 /*
-Debounce_BCD
+Nixie Clock - RTC with Minutes with fade out/in on the ones digit
 
+This code displays the minutes from the RTC. When a change is detected in the ones digit of the minutes, 
+the PWM fades out the digit, increments it, then fades back in. A button can be pressed to increment the RTC time by one minute each p
 The circuit:
 * LED attached from pin 13 to ground
 * pushbutton attached from pin 2 to +5V
 * 10K resistor attached from pin 2 to ground
 * BCD output pins on pins 8-11
 
-* Note: On most Arduino boards, there is already an LED on the board
-connected to pin 13, so you don't need any extra components for this example.
-
-created 19 May 2014
+created 16 May 2015
 by Caleb Davison
-modified 21 May 2014
 
 */
 #include <Wire.h>
@@ -20,15 +18,13 @@ modified 21 May 2014
 #include "RTClib.h"
 #include "RTC_DS3231.h"
 #include "SPI.h"
+#include <FlexiTimer2.h> // Manual PWM library (http://www.arduino.cc/playground/Main/FlexiTimer2)
 
-// Manually do PWM using FlexiTimer2
-// (http://www.arduino.cc/playground/Main/FlexiTimer2)
-#include <FlexiTimer2.h>
 
 #define SQW_FREQ DS3231_SQW_FREQ_1024     //0b00001000   1024Hz
 
-// LED to pulse (non-PWM pin)
-#define LED_secOnes 13
+// LED PWM Pins
+#define LED_minOnes 13
 #define LED2 12
 
 RTC_DS3231 RTC;
@@ -83,7 +79,7 @@ void AnyPWM::pulse() {
 
 // constants won't change. They're used here to
 // set pin numbers:
-const int secondsButton = 2;    // the number of the pushbutton pin
+const int minutesButton = 2;    // the number of the pushbutton pin
 const int ledPin = 11;      // the number of the LED pin
 
 
@@ -104,8 +100,8 @@ long debounceDelay = 50;    // the debounce time; increase if the output flicker
 byte brightness = 255;    // how bright the LED is
 byte fadeAmount = -5;    // how many points to fade the LED by
 
-bool fadeSecOnes = false;
-bool fadeSecTens = false;
+bool fadeMinOnes = false;
+bool fadeMinTens = false;
 
 DateTime prevTime;
 
@@ -121,7 +117,7 @@ void setup() {
   Wire.write(0x00); // set all of port A to outputs
   Wire.endTransmission();
 
-  pinMode(secondsButton, INPUT);
+  pinMode(minutesButton, INPUT);
   pinMode(ledPin, OUTPUT);
 
   //--------RTC SETUP ------------
@@ -152,16 +148,16 @@ void setup() {
 
   // Initialize the PWM's
   AnyPWM::init();       // initialize the PWM timer
-  pinMode(LED_secOnes, OUTPUT); // declare LED pin to be an output
+  pinMode(LED_minOnes, OUTPUT); // declare LED pin to be an output
   pinMode(LED2, OUTPUT); // declare LED pin to be an output
 
   Serial.println("Finished initialization");
 
 }
 
-void secondsButtonDebounce(DateTime now) {
+void minutesButtonDebounce(DateTime now) {
   // read the state of the switch into a local variable:
-  int reading = digitalRead(secondsButton);
+  int reading = digitalRead(minutesButton);
 
   // check to see if you just pressed the button
   // (i.e. the input went from LOW to HIGH),  and you've waited
@@ -197,8 +193,7 @@ void secondsButtonDebounce(DateTime now) {
   digitalWrite(ledPin, ledState);
   //  serial.print("Changing LED to"); serial.print(ledState);
 
-  // save the reading.  Next time through the loop,
-  // it'll be the lastButtonState:
+  // save the reading.  Next time through the loop, it'll be the lastButtonState:
   lastButtonState = reading;
 }
 
@@ -217,14 +212,13 @@ void loop() {
   if(prevTime.minute() != now.minute()){
      Serial.println("The hour has changed!"); 
      prevTime = now;
-     fadeSecOnes = true;
+     fadeMinOnes = true;
   }
   
-  secondsButtonDebounce(now);
+  minutesButtonDebounce(now);
 
-  
-
-  if (fadeSecOnes) {
+  // the logic for fading in/out the ones digit on the minutes of the clock
+  if (fadeMinOnes) {
     // change the brightness for next time through the loop:
     brightness = brightness + fadeAmount;
 
@@ -238,15 +232,13 @@ void loop() {
     // if full brightness, stop fading logic and keep high
     if (brightness == 255) {
       fadeAmount = -fadeAmount;
-      fadeSecOnes = false;
+      fadeMinOnes = false;
     }
-  } // end fadeSecOnes if statement
+  } // end fadeMinOnes if statement
 
   // set the brightness of the LED:
-  AnyPWM::analogWrite(LED_secOnes, brightness);
+  AnyPWM::analogWrite(LED_minOnes, brightness);
 
   delay(10);
-
-
 }
 
