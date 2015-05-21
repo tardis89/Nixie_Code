@@ -1,7 +1,7 @@
 /*
 Nixie Clock - RTC with Minutes with fade out/in on the ones digit
 
-This code displays the minutes from the RTC. When a change is detected in the ones digit of the minutes, 
+This code displays the minutes from the RTC. When a change is detected in the ones digit of the minutes,
 the PWM fades out the digit, increments it, then fades back in. A button can be pressed to increment the RTC time by one minute each p
 The circuit:
 * LED attached from pin 13 to ground
@@ -22,10 +22,6 @@ by Caleb Davison
 
 
 #define SQW_FREQ DS3231_SQW_FREQ_1024     //0b00001000   1024Hz
-
-// LED PWM Pins
-#define LED_minOnes 13
-#define LED2 12
 
 RTC_DS3231 RTC;
 Adafruit_MCP23017 mcp;
@@ -97,16 +93,30 @@ long lastDebounceTime = 0;  // the last time the output pin was toggled
 long debounceDelay = 50;    // the debounce time; increase if the output flickers
 
 // PWM Variables
-byte brightness = 255;    // how bright the LED is
-byte fadeAmount = -5;    // how many points to fade the LED by
-
-bool fadeMinOnes = false;
-bool fadeMinTens = false;
-
+//byte brightness = 255;    // how bright the LED is
+int fadeAmount = -5;    // how many points to fade the LED by
 DateTime prevTime;
+
+// Nixie PWM Pins
+#define LED_minOnes 13
+#define LED2 12
+
+// Variables for all LED's and fade logic
+int hourTens = 0;
+int hourOnes = 1;
+int minTens = 2;
+int minOnes = 3;
+int secTens = 4;
+int secOnes = 5;
+
+volatile int time[6] = { 0, 0, 0, 0, 0, 0 }; // used to separate each h/m/s of time to a part of the array for reference
+int brightness[6] = { 255, 255, 255, 255, 255, 255 }; // initial brightness for each nixie tube
+bool fade[6] = { 0, 0, 0, 0, 0, 0 };
+
 
 void setup() {
   Serial.begin(9600);
+  Serial.println("Initializing fadeAmount:"); Serial.println(fadeAmount);
 
   Serial.println("Intializing the I2C");
   mcp.begin();      // use default address 0
@@ -205,40 +215,40 @@ void displayTime(DateTime now) {
 }
 
 void loop() {
-  
+
   DateTime now = RTC.now();
 
-  Serial.println(now.minute());
-  if(prevTime.minute() != now.minute()){
-     Serial.println("The hour has changed!"); 
-     prevTime = now;
-     fadeMinOnes = true;
+  //Serial.println(now.minute());
+  if (prevTime.minute() != now.minute()) {
+    Serial.println("The minute value has changed!");
+    prevTime = now;
+    fade[minOnes] = true;
   }
-  
+
   minutesButtonDebounce(now);
+  //Serial.println(brightness[minOnes]);
+  //Serial.println("Fade amount: "); Serial.println(fadeAmount);
 
   // the logic for fading in/out the ones digit on the minutes of the clock
-  if (fadeMinOnes) {
+  if (fade[minOnes]) {
     // change the brightness for next time through the loop:
-    brightness = brightness + fadeAmount;
+    brightness[minOnes] = brightness[minOnes] + fadeAmount;
 
-    //if (brightness < 0) brightness = 0;
-    //if (brightness > 255) brightness = 255;
     // if 0 brightness, increment the time then reverse the fadeAmount so it will get bright again
-    if (brightness == 0) {
+    if (brightness[minOnes] == 0) {
       fadeAmount = -fadeAmount;
+
       displayTime(now);
     }
     // if full brightness, stop fading logic and keep high
-    if (brightness == 255) {
+    if (brightness[minOnes] == 255) {
       fadeAmount = -fadeAmount;
-      fadeMinOnes = false;
+      fade[minOnes] = false;
     }
-  } // end fadeMinOnes if statement
+  } // end fade[minOnes] if statement
 
-  // set the brightness of the LED:
-  AnyPWM::analogWrite(LED_minOnes, brightness);
+  // set the brightness of the Nixie Tube:
+  AnyPWM::analogWrite(LED_minOnes, brightness[minOnes]);
 
   delay(10);
 }
-
