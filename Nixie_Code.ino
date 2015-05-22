@@ -94,14 +94,14 @@ long debounceDelay = 50;    // the debounce time; increase if the output flicker
 
 // PWM Variables
 //byte brightness = 255;    // how bright the LED is
-int fadeAmount = -5;    // how many points to fade the LED by
+//int fadeAmount = -5;    // how many points to fade the LED by
 DateTime prevTime;
 
 // Nixie PWM Pins
 #define LED_minOnes 13
 #define LED2 12
 
-// Variables for all LED's and fade logic
+// Declare Array Values for easy and quick reference
 int hourTens = 0;
 int hourOnes = 1;
 int minTens = 2;
@@ -111,12 +111,13 @@ int secOnes = 5;
 
 volatile int time[6] = { 0, 0, 0, 0, 0, 0 }; // used to separate each h/m/s of time to a part of the array for reference
 int brightness[6] = { 255, 255, 255, 255, 255, 255 }; // initial brightness for each nixie tube
-bool fade[6] = { 0, 0, 0, 0, 0, 0 };
+int fadeAmount[6] = { -5, -5, -5, -5, -5, -5 }; // fade amount for each time value
+bool fade[6] = { 0, 0, 0, 0, 0, 0 }; // bool values for entering the fade out/in loops for each nixie tube
 
 
 void setup() {
   Serial.begin(9600);
-  Serial.println("Initializing fadeAmount:"); Serial.println(fadeAmount);
+  //Serial.println("Initializing fadeAmount:"); Serial.println(fadeAmount);
 
   Serial.println("Intializing the I2C");
   mcp.begin();      // use default address 0
@@ -214,6 +215,22 @@ void displayTime(DateTime now) {
   mcp.writeGPIOAB(onesOrValue);
 }
 
+void setBrightness(DateTime setTime, int clockPos) {
+  brightness[clockPos] = brightness[clockPos] + fadeAmount[clockPos];
+
+  // if 0 brightness, increment the time then reverse the fadeAmount so it will get bright again
+  if (brightness[clockPos] == 0) {
+    fadeAmount[clockPos] = -fadeAmount[clockPos];
+    displayTime(setTime);
+  }
+  // if full brightness, stop fading logic and keep high
+  if (brightness[clockPos] == 255) {
+    fadeAmount[clockPos] = -fadeAmount[clockPos];
+    fade[clockPos] = false;
+  }
+}
+
+// Main Loop
 void loop() {
 
   DateTime now = RTC.now();
@@ -226,25 +243,10 @@ void loop() {
   }
 
   minutesButtonDebounce(now);
-  //Serial.println(brightness[minOnes]);
-  //Serial.println("Fade amount: "); Serial.println(fadeAmount);
 
   // the logic for fading in/out the ones digit on the minutes of the clock
   if (fade[minOnes]) {
-    // change the brightness for next time through the loop:
-    brightness[minOnes] = brightness[minOnes] + fadeAmount;
-
-    // if 0 brightness, increment the time then reverse the fadeAmount so it will get bright again
-    if (brightness[minOnes] == 0) {
-      fadeAmount = -fadeAmount;
-
-      displayTime(now);
-    }
-    // if full brightness, stop fading logic and keep high
-    if (brightness[minOnes] == 255) {
-      fadeAmount = -fadeAmount;
-      fade[minOnes] = false;
-    }
+    setBrightness(now, minOnes);
   } // end fade[minOnes] if statement
 
   // set the brightness of the Nixie Tube:
