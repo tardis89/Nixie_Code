@@ -92,9 +92,7 @@ int onesOrValue = 0;
 long lastDebounceTime = 0;  // the last time the output pin was toggled
 long debounceDelay = 50;    // the debounce time; increase if the output flickers
 
-// PWM Variables
-//byte brightness = 255;    // how bright the LED is
-//int fadeAmount = -5;    // how many points to fade the LED by
+
 DateTime prevTime;
 
 // Nixie PWM Pins
@@ -192,11 +190,13 @@ void minutesButtonDebounce(DateTime now) {
       // only increase clock by one minute if the new button state is HIGH
       if (buttonState == HIGH) {
         ledState = !ledState;
-        int addMin = now.minute() + 1;
-        if (addMin == 60) {
-          addMin = 0;
+        if (fade[minOnes] == false) {
+          int addMin = now.minute() + 1;
+          if (addMin == 60) {
+            addMin = 0;
+          }
+          RTC.adjust( DateTime ( now.year(), now.month(), now.day(), now.hour(), (addMin), now.second() ) );
         }
-        RTC.adjust( DateTime ( now.year(), now.month(), now.day(), now.hour(), (addMin), now.second() ) );
       }
     }
   }
@@ -252,5 +252,5 @@ void loop() {
   // set the brightness of the Nixie Tube:
   AnyPWM::analogWrite(LED_minOnes, brightness[minOnes]);
 
-  delay(10);
+  delay(5);
 }
