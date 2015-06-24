@@ -1,17 +1,10 @@
 /*
-Nixie Clock - RTC with Minutes with fade out/in on the ones digit
-
-This code displays the minutes from the RTC. When a change is detected in the ones digit of the minutes,
-the PWM fades out the digit, increments it, then fades back in. A button can be pressed to increment the RTC time by one minute each p
-The circuit:
-* LED attached from pin 13 to ground
-* pushbutton attached from pin 2 to +5V
-* 10K resistor attached from pin 2 to ground
-* BCD output pins on pins 8-11
-
-created 16 May 2015
-by Caleb Davison
-
+Name: Nixie Clock
+Author: Caleb Davison
+Created: 16 May 2015
+Description: This code displays the minutes from the RTC. 
+When the time changes, the PWM fades out the changed digit, increments it, then fades back in. 
+There is a button for both the hours and minutes to change RTC time
 */
 #include <Wire.h>
 #include "Adafruit_MCP23017.h"
@@ -20,15 +13,14 @@ by Caleb Davison
 #include "SPI.h"
 #include <FlexiTimer2.h> // Manual PWM library (http://www.arduino.cc/playground/Main/FlexiTimer2)
 
-
 #define SQW_FREQ DS3231_SQW_FREQ_1024     //0b00001000   1024Hz
+#define PERIOD 256 // Period of the PWM wave (and therefore the number of levels)
 
 RTC_DS3231 RTC;
 Adafruit_MCP23017 mcp;
+Adafruit_MCP23017 mcp2;
 
-// Period of the PWM wave (and therefore the number of levels)
-#define PERIOD 256
-
+/********* START PWM CODE FUNCTIONS/DECLARATIONS **********/
 namespace AnyPWM {
 extern volatile byte pinLevel[12];
 void pulse();
@@ -59,7 +51,6 @@ void AnyPWM::init() {
   FlexiTimer2::start();
 }
 
-
 // Routine to emit the PWM on the pins
 void AnyPWM::pulse() {
   static int counter = 0;
@@ -70,34 +61,29 @@ void AnyPWM::pulse() {
   }
   counter = ++counter > PERIOD ? 0 : counter;
 }
+/********** END PWM CODE FUNCTIONS/DECLARATIONS ***********/
 
-
-
-// constants won't change. They're used here to
-// set pin numbers:
-const int minutesButton = 2;    // the number of the pushbutton pin
-const int ledPin = 11;      // the number of the LED pin
-
+// constants won't change. They're used here to set pin numbers:
+const int hoursButton = 3; // the pin number of the hours set button
+const int minutesButton = 2;    // the pin number of minutes set button
 
 // Variables will change:
-int ledState = HIGH;         // the current state of the output pin
-int buttonState;             // the current reading from the input pin
-int lastButtonState = LOW;   // the previous reading from the input pin
-int ones = 0;
-int tens = 0;
-int onesOrValue = 0;
+int buttonState_hours;             // the current reading from the input pin
+int lastButtonState_hour = LOW;   // the previous reading from the input pin
+int buttonState_min;             // the current reading from the input pin
+int lastbuttonState_min = LOW;   // the previous reading from the input pin
+
+int minOrValue = 0;
+int hoursOrValue = 0;
+int secOrValue = 0;
 
 // the following variables are long's because the time, measured in miliseconds,
 // will quickly become a bigger number than can be stored in an int.
-long lastDebounceTime = 0;  // the last time the output pin was toggled
+long lastDebounceTime_hours = 0;  // the last time the output pin was toggled
+long lastDebounceTime_min = 0;  // the last time the output pin was toggled
 long debounceDelay = 50;    // the debounce time; increase if the output flickers
 
-
 DateTime prevTime;
-
-// Nixie PWM Pins
-#define LED_minOnes 13
-#define LED2 12
 
 // Declare Array Values for easy and quick reference
 int hourTens = 0;
@@ -109,27 +95,51 @@ int secOnes = 5;
 
 volatile int time[6] = { 0, 0, 0, 0, 0, 0 }; // used to separate each h/m/s of time to a part of the array for reference
 int brightness[6] = { 255, 255, 255, 255, 255, 255 }; // initial brightness for each nixie tube
-int fadeAmount[6] = { -5, -5, -5, -5, -5, -5 }; // fade amount for each time value
+int fadeAmount[6] = { -17, -17, -17, -17, -17, -17 }; // fade amount for each time value (17 had to be used because 5 wasn't fast enough and woudl skip numbers)
 bool fade[6] = { 0, 0, 0, 0, 0, 0 }; // bool values for entering the fade out/in loops for each nixie tube
-
+const int LED[6] = { 8, 9,10, 11, 12, 13}; // the PWM pins for the nixie tubes
 
 void setup() {
-  Serial.begin(9600);
-  //Serial.println("Initializing fadeAmount:"); Serial.println(fadeAmount);
+  Serial.begin(115200);
 
   Serial.println("Intializing the I2C");
+  
+  Serial.println("Setting Up 0x20...");
+  // initialize the IO of Port A and B to outputs for 0x20
   mcp.begin();      // use default address 0
 
-  // initialize the IO of Port A to outputs
   Wire.beginTransmission(0x20);
   Wire.write(0x00); // IODIRA register
   Wire.write(0x00); // set all of port A to outputs
   Wire.endTransmission();
 
+  Wire.beginTransmission(0x20);
+  Wire.write(0x01); // IODIRB register
+  Wire.write(0x00); // set all of port B to outputs
+  Wire.endTransmission();
+ 
+  Serial.println("Setting Up 0x21...");
+  // initialize the IO of Port A and B to outputs for 0x21
+  mcp2.begin(1);
+
+  Wire.beginTransmission(0x21);
+  Wire.write(0x00); // IODIRA register
+  Wire.write(0x00); // set all of port A to outputs
+  Wire.endTransmission();
+  
+  Wire.beginTransmission(0x21);
+  Wire.write(0x01); // IODIRB register
+  Wire.write(0x00); // set all of port B to outputs
+  Wire.endTransmission();
+  
+  Serial.println("Setting Up hours and minutes buttons...");
+
+  pinMode(hoursButton, INPUT);
   pinMode(minutesButton, INPUT);
-  pinMode(ledPin, OUTPUT);
 
   //--------RTC SETUP ------------
+  Serial.println("Setting Up RTC...");
+
   Wire.begin();
   RTC.begin();
 
@@ -143,7 +153,7 @@ void setup() {
   prevTime = now;
   DateTime compiled = DateTime(__DATE__, __TIME__);
   if (now.unixtime() < compiled.unixtime()) {
-    //Serial.println("RTC is older than compile time!  Updating");
+    Serial.println("RTC is older than compile time!  Updating");
     RTC.adjust(DateTime(__DATE__, __TIME__));
   }
 
@@ -152,16 +162,50 @@ void setup() {
   RTC.BBSQWEnable(true); // enable the backup battery for when loss of power
   RTC.SQWFrequency( SQW_FREQ );
 
-  Serial.println("Setting the LED to HIGH");
-  digitalWrite(ledPin, ledState);
-
   // Initialize the PWM's
   AnyPWM::init();       // initialize the PWM timer
-  pinMode(LED_minOnes, OUTPUT); // declare LED pin to be an output
-  pinMode(LED2, OUTPUT); // declare LED pin to be an output
-
+  // set all the pwm pins for the Nixie tubes to be outputs
+  for(int i=0; i<6; i++) {
+    pinMode(LED[i], OUTPUT);
+  }
   Serial.println("Finished initialization");
 
+  displayTime(now);
+}
+
+void hoursButtonDebounce(DateTime now) {
+  // read the state of the switch into a local variable:
+  int reading = digitalRead(hoursButton);
+
+  // If the switch changed, due to noise or pressing:
+  if (reading != lastButtonState_hour) {
+    // reset the debouncing timer
+    lastDebounceTime_hours = millis();
+  }
+  if ((millis() - lastDebounceTime_hours) > debounceDelay) {
+    // whatever the reading is at, it's been there for longer
+    // than the debounce delay, so take it as the actual current state:
+
+    // if the button state has changed:
+    if (reading != buttonState_hours) {
+      buttonState_hours = reading;
+      // only toggle the LED if the new button state is HIGH
+      // only increase clock by one hour if the new button state is HIGH
+      if (buttonState_hours == HIGH) {
+        if (fade[hourOnes] == false) {
+          int addHour = now.hour() + 1;
+          if (addHour == 24) {
+            addHour = 0;
+          }
+          RTC.adjust( DateTime ( now.year(), now.month(), now.day(), (addHour), now.minute(), now.second() ) );
+        }
+      }
+    }
+  }
+
+  // save the reading.  Next time through the loop,
+  // it'll be the lastButtonState:
+  lastButtonState_hour = reading;
 }
 
 void minutesButtonDebounce(DateTime now) {
@@ -173,46 +217,58 @@ void minutesButtonDebounce(DateTime now) {
   // long enough since the last press to ignore any noise:
 
   // If the switch changed, due to noise or pressing:
-  if (reading != lastButtonState) {
+  if (reading != lastbuttonState_min) {
     // reset the debouncing timer
-    lastDebounceTime = millis();
+    lastDebounceTime_min = millis();
   }
 
-  if ((millis() - lastDebounceTime) > debounceDelay) {
+  if ((millis() - lastDebounceTime_min) > debounceDelay) {
     // whatever the reading is at, it's been there for longer
     // than the debounce delay, so take it as the actual current state:
 
     // if the button state has changed:
-    if (reading != buttonState) {
-      buttonState = reading;
+    if (reading != buttonState_min) {
+      buttonState_min = reading;
 
       // only toggle the LED if the new button state is HIGH
       // only increase clock by one minute if the new button state is HIGH
-      if (buttonState == HIGH) {
-        ledState = !ledState;
+      if (buttonState_min == HIGH) {
         if (fade[minOnes] == false) {
           int addMin = now.minute() + 1;
+          int Hours = now.hour();
           if (addMin == 60) {
             addMin = 0;
+            Hours = now.hour() + 1;
+            if (Hours == 24) {
+              Hours = 0;
+            }
           }
-          RTC.adjust( DateTime ( now.year(), now.month(), now.day(), now.hour(), (addMin), now.second() ) );
+          RTC.adjust( DateTime ( now.year(), now.month(), now.day(), (Hours), (addMin), now.second() ) );
         }
       }
     }
   }
-  // set the LED:
-  digitalWrite(ledPin, ledState);
-  //  serial.print("Changing LED to"); serial.print(ledState);
-
-  // save the reading.  Next time through the loop, it'll be the lastButtonState:
-  lastButtonState = reading;
+  lastbuttonState_min = reading; // save the reading.  Next time through the loop, it'll be the lastbuttonState_min:
 }
 
+
 void displayTime(DateTime now) {
-  ones = (now.minute()) % 10;
-  tens = ((now.minute()) % 100 - ones) / 10;
-  onesOrValue = (tens << 4) | ones;
-  mcp.writeGPIOAB(onesOrValue);
+  Serial.println("Displaying the time!");
+  time[hourOnes] = (now.hour()) % 10;
+  time[hourTens] = ((now.hour()) % 100 - time[hourOnes]) / 10;
+  hoursOrValue = (time[hourTens] << 4) | time[hourOnes];
+
+  time[minOnes] = (now.minute()) % 10;
+  time[minTens] = ((now.minute()) % 100 - time[minOnes]) / 10;
+  minOrValue = (time[minOnes] << 4) | time[minTens];
+
+  time[secOnes] = (now.second()) % 10;
+  time[secTens] = ((now.second()) % 100 - time[secOnes]) / 10;
+  secOrValue = (time[secTens] << 4) | time[secOnes];
+  
+  double tmp = minOrValue;
+  mcp.writeGPIOAB((hoursOrValue << 8) | minOrValue);
+  mcp2.writeGPIOAB(secOrValue << 8);
 }
 
 void setBrightness(DateTime setTime, int clockPos) {
@@ -235,22 +291,52 @@ void loop() {
 
   DateTime now = RTC.now();
 
-  //Serial.println(now.minute());
+  if (prevTime.hour() != now.hour()) {
+    Serial.println("The hour value has changed!");
+    // check to see if the tens digit has also changed
+    if ( ((prevTime.hour() / 10) % 10) != ((now.hour() / 10) % 10)) {
+      Serial.println("The tens value has changed too!");
+      fade[hourTens] = true;
+    }
+    // update the previous time
+    prevTime = now;
+    fade[hourOnes] = true;
+  }
   if (prevTime.minute() != now.minute()) {
     Serial.println("The minute value has changed!");
+    // check to see if the tens digit has also changed
+    if ( ((prevTime.minute() / 10) % 10) != ((now.minute() / 10) % 10)) {
+      Serial.println("The tens value has changed too!");
+      fade[minTens] = true;
+    }
+    // update the previous time
     prevTime = now;
     fade[minOnes] = true;
   }
+  if (prevTime.second() != now.second()) {
+    Serial.println("The second value has changed!");
+    // check to see if the tens digit has also changed
+    if ( ((prevTime.second() / 10) % 10) != ((now.second() / 10) % 10)) {
+      Serial.println("The tens value has changed too!");
+      fade[secTens] = true;
+    }
+    // update the previous time
+    prevTime = now;
+    fade[secOnes] = true;
+  }
 
+  hoursButtonDebounce(now);
   minutesButtonDebounce(now);
 
-  // the logic for fading in/out the ones digit on the minutes of the clock
-  if (fade[minOnes]) {
-    setBrightness(now, minOnes);
-  } // end fade[minOnes] if statement
+  // loop through the hours/min/sec digits for the clock and set the brightness for each tube
+  for(int i=0; i<6; i++) {
+    // the logic for fading in/out the ones digit on the minutes of the clock
+    if (fade[i]) setBrightness(now, i);
+    // set the brightness of the Nixie Tube:
+    AnyPWM::analogWrite(LED[i], brightness[i]);
 
-  // set the brightness of the Nixie Tube:
-  AnyPWM::analogWrite(LED_minOnes, brightness[minOnes]);
+  }
+//  Serial.println(brightness[secOnes]);
 
   delay(5);
 }
