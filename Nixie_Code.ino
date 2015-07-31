@@ -11,77 +11,44 @@ There is a button for both the hours and minutes to change RTC time
 #include "RTClib.h"
 #include "RTC_DS3231.h"
 #include "SPI.h"
-#include <FlexiTimer2.h> // Manual PWM library (http://www.arduino.cc/playground/Main/FlexiTimer2)
+#include <SoftPWM.h>
 
 #define SQW_FREQ DS3231_SQW_FREQ_1024     //0b00001000   1024Hz
-#define PERIOD 256 // Period of the PWM wave (and therefore the number of levels)
 
 RTC_DS3231 RTC;
 Adafruit_MCP23017 mcp;
 Adafruit_MCP23017 mcp2;
 
-/********* START PWM CODE FUNCTIONS/DECLARATIONS **********/
-namespace AnyPWM {
-extern volatile byte pinLevel[12];
-void pulse();
-void analogWrite(byte pin, byte level);
-void init();
-}
-
-// Variables to keep track of the pin states
-volatile byte AnyPWM::pinLevel[12] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-
-// Set a digital out pin to a specific level
-void AnyPWM::analogWrite(byte pin, byte level) {
-  if (pin > 1 && pin < 14 && level >= 0 && level < PERIOD) {
-    pin -= 2;
-    AnyPWM::pinLevel[pin] = level;
-    if (level == 0) {
-      digitalWrite(pin + 2, LOW);
-    }
-  }
-}
-
-// Initialize the timer routine; must be called before calling
-// AnyPWM::analogWrite!
-void AnyPWM::init() {
-  // (PERIOD * 64) Hertz seems to be a high enough frequency to produce
-  // a steady PWM signal on all 12 output pins
-  FlexiTimer2::set(1, 1.0 / (PERIOD * 64), AnyPWM::pulse);
-  FlexiTimer2::start();
-}
-
-// Routine to emit the PWM on the pins
-void AnyPWM::pulse() {
-  static int counter = 0;
-  for (int i = 0; i < 12; i += 1) {
-    if (AnyPWM::pinLevel[i]) {
-      digitalWrite(i + 2, AnyPWM::pinLevel[i] > counter);
-    }
-  }
-  counter = ++counter > PERIOD ? 0 : counter;
-}
-/********** END PWM CODE FUNCTIONS/DECLARATIONS ***********/
 
 // constants won't change. They're used here to set pin numbers:
-const int hoursButton = 3; // the pin number of the hours set button
+const int hoursButton = 3; // the pin number (D3) of the hours set button
 const int minutesButton = 2;    // the pin number of minutes set button
+const int LEDselectButton = 4; // the pin number of the LED select button
+const int analogPin = 3; // this is for A3
 
 // Variables will change:
 int buttonState_hours;             // the current reading from the input pin
 int lastButtonState_hour = LOW;   // the previous reading from the input pin
 int buttonState_min;             // the current reading from the input pin
 int lastbuttonState_min = LOW;   // the previous reading from the input pin
+int buttonState_LEDselect;  // the current reading from the input pin
+int lastbuttonState_LEDselect = LOW; // the current reading from the input pin
 
 int minOrValue = 0;
 int hoursOrValue = 0;
 int secOrValue = 0;
 
+int val = 0; // variable to store the analog voltage read
+
 // the following variables are long's because the time, measured in miliseconds,
 // will quickly become a bigger number than can be stored in an int.
-long lastDebounceTime_hours = 0;  // the last time the output pin was toggled
-long lastDebounceTime_min = 0;  // the last time the output pin was toggled
+long lastDebounceTime_hours = 0;  // the last time the hours output pin was toggled
+long lastDebounceTime_min = 0;  // the last time the minutes output pin was toggled
+long lastDebounceTime_LEDselect = 0; // the last time the LED select pin was toggled
 long debounceDelay = 50;    // the debounce time; increase if the output flickers
+
+long ButtonHighTime = 0;
+const int ButtonPressTime = 2000; // 2 seconds
 
 DateTime prevTime;
 
@@ -94,10 +61,15 @@ int secTens = 4;
 int secOnes = 5;
 
 volatile int time[6] = { 0, 0, 0, 0, 0, 0 }; // used to separate each h/m/s of time to a part of the array for reference
-int brightness[6] = { 255, 255, 255, 255, 255, 255 }; // initial brightness for each nixie tube
+int brightness_nixie[6] = { 255, 255, 255, 255, 255, 255 }; // initial brightness for each nixie tube
 int fadeAmount[6] = { -17, -17, -17, -17, -17, -17 }; // fade amount for each time value (17 had to be used because 5 wasn't fast enough and woudl skip numbers)
 bool fade[6] = { 0, 0, 0, 0, 0, 0 }; // bool values for entering the fade out/in loops for each nixie tube
-const int LED[6] = { 8, 9,10, 11, 12, 13}; // the PWM pins for the nixie tubes
+const int Nixie_PWM[6] = { 8, 9,10, 11, 12, 13}; // the PWM pins for the nixie tubes
+const int LED_PWM[3] = { 14, 15, 16};
+
+int RGB_ON[3] = { 1, 1, 1}; // R/G/B enable bits for software enable/disable logic
+int RGB_ProgramState = 0; // 0 is all on mode where all three colors will be enabled
+int RGB_Brightness[3] = { 255, 255, 255 }; // brightness setting for the LED's
 
 void setup() {
   Serial.begin(115200);
@@ -136,6 +108,7 @@ void setup() {
 
   pinMode(hoursButton, INPUT);
   pinMode(minutesButton, INPUT);
+  pinMode(LEDselectButton, INPUT);
 
   //--------RTC SETUP ------------
   Serial.println("Setting Up RTC...");
@@ -163,11 +136,16 @@ void setup() {
   RTC.SQWFrequency( SQW_FREQ );
 
   // Initialize the PWM's
-  AnyPWM::init();       // initialize the PWM timer
-  // set all the pwm pins for the Nixie tubes to be outputs
+  // set all the pwm pins for the Nixie tubes and LED's to be outputs
+  SoftPWMBegin();
+  SoftPWMSetFadeTime(ALL, 25, 25);
   for(int i=0; i<6; i++) {
-    pinMode(LED[i], OUTPUT);
+    SoftPWMSet(Nixie_PWM[i], 0);
+    if (i < 3) {
+      SoftPWMSet(LED_PWM[i], 0);
+    }
   }
+  
   Serial.println("Finished initialization");
 
   displayTime(now);
@@ -251,9 +229,96 @@ void minutesButtonDebounce(DateTime now) {
   lastbuttonState_min = reading; // save the reading.  Next time through the loop, it'll be the lastbuttonState_min:
 }
 
+void LEDselectButtonDebounce() {
+  // read the state of the switch into a local variable:
+  int reading = digitalRead(LEDselectButton);
+  
+  // check to see if you just pressed the button
+  // (i.e. the input went from LOW to HIGH),  and you've waited
+  // long enough since the last press to ignore any noise:
+  
+  // If the switch changed, due to noise or pressing:
+  if (reading != lastbuttonState_LEDselect) {
+    // reset the debouncing timer
+    lastDebounceTime_LEDselect = millis();
+  }
+  
+  if ((millis() - lastDebounceTime_LEDselect) > debounceDelay) {
+    // whatever the reading is at, it's been there for longer
+    // than the debounce delay, so take it as the actual current state:
+    if (buttonState_LEDselect == HIGH && ((millis() - ButtonHighTime) > ButtonPressTime)) {
+      // if held for more than ButtonPressTime
+      Serial.println("You've pressed it for longer than 2 seconds");
+      if (RGB_ProgramState == 1) {
+        // RED MODE
+        Serial.println("Saving the brighness for the RED LED");
+        RGB_Brightness[0] = val;
+      }else if (RGB_ProgramState == 2) {
+        // GREEN MODE
+        Serial.println("Saving the brighness for the GREEN LED");
+        RGB_Brightness[1] = val;
+        
+      }else if (RGB_ProgramState == 3) {
+        // BLUE MODE
+        Serial.println("Saving the brighness for the BLUE LED");
+        RGB_Brightness[2] = val;
+        
+      }
+    }
+    // if the button state has changed:
+    if (reading != buttonState_LEDselect) {
+      buttonState_LEDselect = reading;
+      
+      if (buttonState_LEDselect == HIGH) {
+        // add code here for handling multiple LED brighnesses
+        Serial.println("You pressed the program button!");
+        Serial.println(RGB_ProgramState);
+        ButtonHighTime = millis();
+      }
+    } else if (buttonState_LEDselect == LOW){
+      // logic for if the button was released
+      if (ButtonHighTime != 0) {
+        Serial.println("The button was released!");
+      }
+      // if not held for more than the ButtonPressTime, do this code, otherwise reset counter for next time it's pressed
+      if ((millis() - ButtonHighTime) < ButtonPressTime) {
+        Serial.println("The button was held for less than 2 seconds");
+        Serial.println(RGB_ProgramState);
+        RGB_ProgramState = RGB_ProgramState + 1;
+        Serial.println(RGB_ProgramState);
+        if (RGB_ProgramState == 1) {
+          Serial.println("Setting to RED brightness program.");
+//          RGB_ON[0] = 1;
+//          RGB_ON[1] = 0;
+//          RGB_ON[2] = 0;
+        } else if (RGB_ProgramState == 2) {
+          Serial.println("Setting to BLUE brightness program.");
+//          RGB_ON[0] = 0;
+//          RGB_ON[1] = 1;
+//          RGB_ON[2] = 0;
+        } else if (RGB_ProgramState == 3) {
+          Serial.println("Setting to GREEN brightness program.");
+//          RGB_ON[0] = 0;
+//          RGB_ON[1] = 0;
+//          RGB_ON[2] = 1;
+        } else if (RGB_ProgramState > 3) {
+          Serial.println("Setting to Default Mode.");
+          RGB_ProgramState = 0;
+//          RGB_ON[0] = 1;
+//          RGB_ON[1] = 1;
+//          RGB_ON[2] = 1;
+        }
+      }
+      
+      ButtonHighTime = 0;
+      
+    }
+  }
+  lastbuttonState_LEDselect = reading; // save the reading.  Next time through the loop, it'll be the lastbuttonState_min:
+}
 
 void displayTime(DateTime now) {
-  Serial.println("Displaying the time!");
+//  Serial.println("Displaying the time!");
   time[hourOnes] = (now.hour()) % 10;
   time[hourTens] = ((now.hour()) % 100 - time[hourOnes]) / 10;
   hoursOrValue = (time[hourTens] << 4) | time[hourOnes];
@@ -272,15 +337,15 @@ void displayTime(DateTime now) {
 }
 
 void setBrightness(DateTime setTime, int clockPos) {
-  brightness[clockPos] = brightness[clockPos] + fadeAmount[clockPos];
+  brightness_nixie[clockPos] = brightness_nixie[clockPos] + fadeAmount[clockPos];
 
   // if 0 brightness, increment the time then reverse the fadeAmount so it will get bright again
-  if (brightness[clockPos] == 0) {
+  if (brightness_nixie[clockPos] == 0) {
     fadeAmount[clockPos] = -fadeAmount[clockPos];
     displayTime(setTime);
   }
   // if full brightness, stop fading logic and keep high
-  if (brightness[clockPos] == 255) {
+  if (brightness_nixie[clockPos] == 255) {
     fadeAmount[clockPos] = -fadeAmount[clockPos];
     fade[clockPos] = false;
   }
@@ -292,10 +357,10 @@ void loop() {
   DateTime now = RTC.now();
 
   if (prevTime.hour() != now.hour()) {
-    Serial.println("The hour value has changed!");
+//    Serial.println("The hour value has changed!");
     // check to see if the tens digit has also changed
     if ( ((prevTime.hour() / 10) % 10) != ((now.hour() / 10) % 10)) {
-      Serial.println("The tens value has changed too!");
+//      Serial.println("The tens value has changed too!");
       fade[hourTens] = true;
     }
     // update the previous time
@@ -303,10 +368,10 @@ void loop() {
     fade[hourOnes] = true;
   }
   if (prevTime.minute() != now.minute()) {
-    Serial.println("The minute value has changed!");
+//    Serial.println("The minute value has changed!");
     // check to see if the tens digit has also changed
     if ( ((prevTime.minute() / 10) % 10) != ((now.minute() / 10) % 10)) {
-      Serial.println("The tens value has changed too!");
+//      Serial.println("The tens value has changed too!");
       fade[minTens] = true;
     }
     // update the previous time
@@ -314,29 +379,74 @@ void loop() {
     fade[minOnes] = true;
   }
   if (prevTime.second() != now.second()) {
-    Serial.println("The second value has changed!");
+//    Serial.println("The second value has changed!");
     // check to see if the tens digit has also changed
     if ( ((prevTime.second() / 10) % 10) != ((now.second() / 10) % 10)) {
-      Serial.println("The tens value has changed too!");
+//      Serial.println("The tens value has changed too!");
       fade[secTens] = true;
     }
     // update the previous time
     prevTime = now;
     fade[secOnes] = true;
   }
-
-  hoursButtonDebounce(now);
-  minutesButtonDebounce(now);
+  
+  // don't allow button presses within the first 3 seconds of powering on
+  // this prevents noise "button" presses that occur rapidly at startup
+  if (millis() > 3000) {
+    hoursButtonDebounce(now);
+    minutesButtonDebounce(now);
+    LEDselectButtonDebounce();
+  }
+  
+  
+  val = analogRead(analogPin);
+//  Serial.println(val);
+  val = val/4;
+//  Serial.println(val);
+  if (val > 255) {
+    val = 255;
+  }else if (val <= 20 && val > 10) {
+    val = 10;
+  }else if (val < 10){
+    val = 0;
+  }
 
   // loop through the hours/min/sec digits for the clock and set the brightness for each tube
   for(int i=0; i<6; i++) {
-    // the logic for fading in/out the ones digit on the minutes of the clock
     if (fade[i]) setBrightness(now, i);
-    // set the brightness of the Nixie Tube:
-    AnyPWM::analogWrite(LED[i], brightness[i]);
-
+    // set the brightness of the Nixie Tube
+    SoftPWMSet(Nixie_PWM[i], brightness_nixie[i]);
   }
+  
+  // Process the Red LED display
+  if (RGB_ON[0]) {
+    if (RGB_ProgramState == 1)
+      SoftPWMSet(LED_PWM[0], val);
+    else
+      SoftPWMSet(LED_PWM[0], RGB_Brightness[0]);
+  } else {
+    SoftPWMSet(LED_PWM[0], 0);
+  }
+  // Process the Green LED display
+  if (RGB_ON[1]) {
+    if (RGB_ProgramState == 2)
+      SoftPWMSet(LED_PWM[1], val);
+    else
+      SoftPWMSet(LED_PWM[1], RGB_Brightness[1]);
+  } else {
+    SoftPWMSet(LED_PWM[1], 0);
+  }
+  // Process the Blue LED display
+  if (RGB_ON[2]) {
+    if (RGB_ProgramState == 3)
+      SoftPWMSet(LED_PWM[2], val);
+    else
+      SoftPWMSet(LED_PWM[2], RGB_Brightness[2]);
+  } else {
+    SoftPWMSet(LED_PWM[2], 0);
+  }
+  
 //  Serial.println(brightness[secOnes]);
 
-  delay(5);
+  delay(25);
 }
