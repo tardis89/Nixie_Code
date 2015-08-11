@@ -47,8 +47,13 @@ long lastDebounceTime_min = 0;  // the last time the minutes output pin was togg
 long lastDebounceTime_LEDselect = 0; // the last time the LED select pin was toggled
 long debounceDelay = 50;    // the debounce time; increase if the output flickers
 
+long programButtonReleased = 0; // the last time the program button was released
+long lastProgramActivity = 0; // the time that it last entered a program state
+
 long ButtonHighTime = 0;
-const int ButtonPressTime = 2000; // 2 seconds
+const long ButtonPressTime = 2000; // 2 seconds
+const long MaxProgramTime = 60000; // 60 seconds
+const long DisplayProgramLED = 3000; // 3 seconds
 
 DateTime prevTime;
 
@@ -279,6 +284,10 @@ void LEDselectButtonDebounce() {
       // logic for if the button was released
       if (ButtonHighTime != 0) {
         Serial.println("The button was released!");
+        programButtonReleased = millis();
+        if (RGB_ProgramState != 0) {
+          lastProgramActivity = millis();
+        }
       }
       // if not held for more than the ButtonPressTime, do this code, otherwise reset counter for next time it's pressed
       if ((millis() - ButtonHighTime) < ButtonPressTime) {
@@ -292,21 +301,19 @@ void LEDselectButtonDebounce() {
 //          RGB_ON[1] = 0;
 //          RGB_ON[2] = 0;
         } else if (RGB_ProgramState == 2) {
-          Serial.println("Setting to BLUE brightness program.");
+          Serial.println("Setting to GREEN brightness program.");
 //          RGB_ON[0] = 0;
 //          RGB_ON[1] = 1;
 //          RGB_ON[2] = 0;
         } else if (RGB_ProgramState == 3) {
-          Serial.println("Setting to GREEN brightness program.");
+          Serial.println("Setting to BLUE brightness program.");
 //          RGB_ON[0] = 0;
 //          RGB_ON[1] = 0;
 //          RGB_ON[2] = 1;
         } else if (RGB_ProgramState > 3) {
           Serial.println("Setting to Default Mode.");
           RGB_ProgramState = 0;
-//          RGB_ON[0] = 1;
-//          RGB_ON[1] = 1;
-//          RGB_ON[2] = 1;
+          RGB_ON[0] = RGB_ON[1] = RGB_ON[2] = 1;
         }
       }
       
@@ -416,6 +423,15 @@ void loop() {
     if (fade[i]) setBrightness(now, i);
     // set the brightness of the Nixie Tube
     SoftPWMSet(Nixie_PWM[i], brightness_nixie[i]);
+  }
+  
+//  Serial.println(millis()-programButtonReleased);
+//  Serial.println(MaxProgramTime);
+  
+  if ((millis() - programButtonReleased) > MaxProgramTime && RGB_ProgramState != 0) {
+    Serial.println("No programming activity has taking place in the designated time. Returning to normal mode!");
+    lastProgramActivity = 0;
+    RGB_ProgramState = 0;
   }
   
   // Process the Red LED display
