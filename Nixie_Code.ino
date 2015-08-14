@@ -12,6 +12,7 @@ There is a button for both the hours and minutes to change RTC time
 #include "RTC_DS3231.h"
 #include "SPI.h"
 #include <SoftPWM.h>
+#include <EEPROM.h>
 
 #define SQW_FREQ DS3231_SQW_FREQ_1024     //0b00001000   1024Hz
 
@@ -67,7 +68,7 @@ int secOnes = 5;
 
 volatile int time[6] = { 0, 0, 0, 0, 0, 0 }; // used to separate each h/m/s of time to a part of the array for reference
 int brightness_nixie[6] = { 255, 255, 255, 255, 255, 255 }; // initial brightness for each nixie tube
-int fadeAmount[6] = { -17, -17, -17, -17, -17, -17 }; // fade amount for each time value (17 had to be used because 5 wasn't fast enough and woudl skip numbers)
+int fadeAmount[6] = { -17, -17, -17, -17, -17, -17 }; // fade amount for each time value (17 had to be used because 5 wasn't fast enough and would skip numbers)
 bool fade[6] = { 0, 0, 0, 0, 0, 0 }; // bool values for entering the fade out/in loops for each nixie tube
 const int Nixie_PWM[6] = { 8, 9,10, 11, 12, 13}; // the PWM pins for the nixie tubes
 const int LED_PWM[3] = { 14, 15, 16};
@@ -80,6 +81,11 @@ void setup() {
   Serial.begin(115200);
 
   Serial.println("Intializing the I2C");
+  
+  // read the EEPROM settings for the LED brightness
+  RGB_Brightness[0] = EEPROM.read(0);
+  RGB_Brightness[1] = EEPROM.read(1);
+  RGB_Brightness[2] = EEPROM.read(2);
   
   Serial.println("Setting Up 0x20...");
   // initialize the IO of Port A and B to outputs for 0x20
@@ -258,16 +264,17 @@ void LEDselectButtonDebounce() {
         // RED MODE
         Serial.println("Saving the brighness for the RED LED");
         RGB_Brightness[0] = val;
+        EEPROM.write(0,val);
       }else if (RGB_ProgramState == 2) {
         // GREEN MODE
         Serial.println("Saving the brighness for the GREEN LED");
         RGB_Brightness[1] = val;
-        
+        EEPROM.write(1,val);
       }else if (RGB_ProgramState == 3) {
         // BLUE MODE
         Serial.println("Saving the brighness for the BLUE LED");
         RGB_Brightness[2] = val;
-        
+        EEPROM.write(2,val);
       }
     }
     // if the button state has changed:
